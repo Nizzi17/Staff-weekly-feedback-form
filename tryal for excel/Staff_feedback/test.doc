@@ -1,0 +1,284 @@
+S/N	Activity	Start Date	Work Done	Status	Approval from ECOP (if any)
+
+'ID', 'Feedback', 'Start Date', 'Name', 'Division', 'Work Done', 
+    'Status', 'Recommendation', 'Approval from ECOP (if any)'
+
+
+
+
+
+
+
+    # app.py
+from flask import Flask, render_template, request, redirect, url_for
+import pandas as pd
+import os #operating system
+from openpyxl import load_workbook
+from openpyxl.styles import Font, Alignment, PatternFill
+from datetime import datetime
+
+app = Flask(__name__)
+
+EXCEL_FILE = 'data/staff_feedback.xlsx' #because this file staff_feedback.xlsx is in the folder data, it has to be written this way if it is to be called and used in the code, this is called relative file paths
+DIVISIONS = {
+    'Financial Derivatives Division': {'header_row': 1, 'data_start_row': 3},
+    'Commodities and Exchange Division': {'header_row': 51, 'data_start_row': 53},
+    'Risk Management Division': {'header_row': 101, 'data_start_row': 103} # Dictionaries in dictionaries
+}
+
+# Write column headers
+headers = [
+    'ID', 'Name', 'Division', 'Work Done', 'Start Date', 
+    'Status', 'Feedback', 'Recommendation', 'Divisional Head Comment'
+]
+
+def get_current_week_sheet_name():
+    """Returns sheet name in format 'YYYY-WW' based on current date"""
+    today = datetime.now()
+    year, week_num, _ = today.isocalendar()
+    return f"{year}-W{week_num:02d}"
+
+def init_excel():
+    if not os.path.exists('data'):
+        os.makedirs('data')
+    
+    current_sheet_name = get_current_week_sheet_name()
+    
+    if not os.path.isfile(EXCEL_FILE): #if the staff_feedbark.xlsx is not a file but a directory then 
+        # Create a new Excel file with the current week's sheet
+        with pd.ExcelWriter(EXCEL_FILE, engine='openpyxl') as writer:
+            pd.DataFrame().to_excel(writer, sheet_name=current_sheet_name, index=False)
+        
+        # Format the sheet
+        format_sheet(current_sheet_name)
+    else:
+        # Check if current week's sheet exists
+        wb = load_workbook(EXCEL_FILE)
+        if current_sheet_name not in wb.sheetnames:
+            # Create new sheet for current week
+            wb.create_sheet(current_sheet_name)
+            wb.save(EXCEL_FILE)
+            format_sheet(current_sheet_name)
+        wb.close()
+
+def format_sheet(sheet_name):
+    """Format a sheet with the required structure"""
+    wb = load_workbook(EXCEL_FILE)
+    ws = wb[sheet_name]
+    
+    # Hide ID (column A) and Division (column C) columns
+    ws.column_dimensions['A'].hidden = True
+    ws.column_dimensions['C'].hidden = True
+
+    # Define styles
+    header_font = Font(bold=True)
+    division_header_fill = PatternFill(start_color='002060', end_color='002060', fill_type='solid')
+    column_header_fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+    
+    # Set up each division section
+    for division, positions in DIVISIONS.items():
+        # Division header (merged cells)
+        ws.merge_cells(start_row=positions['header_row'], start_column=1, 
+                      end_row=positions['header_row'], end_column=len(headers))
+        cell = ws.cell(row=positions['header_row'], column=1, value=division)
+        cell.alignment = Alignment(horizontal='center')
+        cell.font = Font(bold=True, color='FFFFFF')  # White text for better contrast
+        cell.fill = division_header_fill  # Deep blue background
+        
+        # Column headers
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=positions['header_row'] + 1, column=col_num, value=header)
+            cell.font = header_font
+            cell.fill = column_header_fill  # Light blue background for column headers
+    
+    wb.save(EXCEL_FILE)
+
+def get_next_available_row(sheet_name, division):
+    wb = load_workbook(EXCEL_FILE)
+    ws = wb[sheet_name]
+    
+    data_start_row = DIVISIONS[division]['data_start_row']
+    current_row = data_start_row
+    
+    while ws.cell(row=current_row, column=1).value is not None:
+        current_row += 1
+    
+    wb.close()
+    return current_row
+
+def save_to_excel(entry):
+    current_sheet_name = get_current_week_sheet_name()
+    wb = load_workbook(EXCEL_FILE)
+    ws = wb[current_sheet_name]
+    
+    # Ensure columns stay hidden
+    ws.column_dimensions['A'].hidden = True
+    ws.column_dimensions['C'].hidden = True
+
+    division = entry['Division']
+    row = get_next_available_row(current_sheet_name, division)
+    
+    # Write the data to the appropriate row
+    ws.cell(row=row, column=1, value=entry['ID'])
+    ws.cell(row=row, column=2, value=entry['Name'])
+    ws.cell(row=row, column=3, value=division)
+    ws.cell(row=row, column=4, value=entry['Work Done'])
+    ws.cell(row=row, column=5, value=entry['Start Date'])
+    ws.cell(row=row, column=6, value=entry['Status'])
+    ws.cell(row=row, column=7, value=entry['Feedback'])
+    ws.cell(row=row, column=8, value=entry['Recommendation'])
+    ws.cell(row=row, column=9, value=entry['Divisional Head Comment'])
+    
+    # Reapply header styles in case they were overwritten
+    header_font = Font(bold=True)
+    column_header_fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+    
+    for division, positions in DIVISIONS.items():
+        # Reapply division header style
+        cell = ws.cell(row=positions['header_row'], column=1)
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = PatternFill(start_color='002060', end_color='002060', fill_type='solid')
+        
+        # Reapply column header style
+        for col_num in range(1, len(headers) + 1):
+            cell = ws.cell(row=positions['header_row'] + 1, column=col_num)
+            cell.font = header_font
+            cell.fill = column_header_fill
+    
+    wb.save(EXCEL_FILE)
+    wb.close()
+
+def read_all_entries():
+    """Read entries from all sheets"""
+    wb = load_workbook(EXCEL_FILE)
+    entries = []
+    
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        
+        for division, positions in DIVISIONS.items():
+            current_row = positions['data_start_row']
+            
+            while ws.cell(row=current_row, column=1).value is not None:
+                entry = {
+                    'ID': ws.cell(row=current_row, column=1).value,
+                    'Name': ws.cell(row=current_row, column=2).value,
+                    'Division': ws.cell(row=current_row, column=3).value,
+                    'Work Done': ws.cell(row=current_row, column=4).value,
+                    'Start Date': ws.cell(row=current_row, column=5).value,
+                    'Status': ws.cell(row=current_row, column=6).value,
+                    'Feedback': ws.cell(row=current_row, column=7).value,
+                    'Recommendation': ws.cell(row=current_row, column=8).value,
+                    'Divisional Head Comment': ws.cell(row=current_row, column=9).value,
+                    'Week': sheet_name  # Add week information
+                }
+                entries.append(entry)
+                current_row += 1
+    
+    wb.close()
+    return entries
+
+def update_entry(entry_id, updated_data):
+    """Search through all sheets to find and update the entry"""
+    wb = load_workbook(EXCEL_FILE)
+    
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        
+        for division, positions in DIVISIONS.items():
+            current_row = positions['data_start_row']
+            
+            while ws.cell(row=current_row, column=1).value is not None:
+                if ws.cell(row=current_row, column=1).value == entry_id:
+                    # Update the entry
+                    ws.cell(row=current_row, column=4, value=updated_data['Work Done'])
+                    ws.cell(row=current_row, column=5, value=updated_data['Start Date'])
+                    ws.cell(row=current_row, column=6, value=updated_data['Status'])
+                    ws.cell(row=current_row, column=7, value=updated_data['Feedback'])
+                    ws.cell(row=current_row, column=8, value=updated_data['Recommendation'])
+                    ws.cell(row=current_row, column=9, value=updated_data['Divisional Head Comment'])
+                    
+                    wb.save(EXCEL_FILE)
+                    wb.close()
+                    return True
+                current_row += 1
+    
+    wb.close()
+    return False
+
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    init_excel()
+    if request.method == 'POST':
+        names = request.form['name']
+        division = request.form['division']
+        comments = request.form['comment']
+
+        work_done_list = request.form.getlist('work_done[]')
+        date_list = request.form.getlist('date[]')
+        status_list = request.form.getlist('status[]')
+        feedback_list = request.form.getlist('feedback[]')
+        recommendation_list = request.form.getlist('recommendation[]')
+
+        # Get the next available ID (across all sheets)
+        all_entries = read_all_entries()
+        existing_max_id = max([entry['ID'] for entry in all_entries]) if all_entries else 0
+
+        for i in range(len(work_done_list)):
+            entry = {
+                'ID': existing_max_id + i + 1,
+                'Name': names,
+                'Division': division,
+                'Work Done': work_done_list[i],
+                'Start Date': date_list[i],
+                'Status': status_list[i],
+                'Feedback': feedback_list[i],
+                'Recommendation': recommendation_list[i],
+                'Divisional Head Comment': comments
+            }
+            save_to_excel(entry)
+
+        return redirect(url_for('submissions'))
+
+    return render_template('form_multi.html')
+
+@app.route('/submissions')
+def submissions():
+    init_excel()
+    entries = read_all_entries()
+    query = request.args.get('q', '').strip().lower()
+
+    if query:
+        entries = [entry for entry in entries 
+                  if query in str(entry['Name']).lower() or 
+                     query in str(entry['Division']).lower() or
+                     query in str(entry['Week']).lower()]
+
+    return render_template('submissions.html', data=entries)
+
+@app.route('/edit/<int:entry_id>', methods=['GET', 'POST'])
+def edit(entry_id):
+    init_excel()
+    entries = read_all_entries()
+    entry = next((e for e in entries if e['ID'] == entry_id), None)
+
+    if not entry:
+        return "Entry not found.", 404
+
+    if request.method == 'POST':
+        updated_data = {
+            'Work Done': request.form['work_done'],
+            'Start Date': request.form['date'],
+            'Status': request.form['status'],
+            'Feedback': request.form['feedback'],
+            'Recommendation': request.form['recommendation'],
+            'Divisional Head Comment': request.form['comment']
+        }
+        update_entry(entry_id, updated_data)
+        return redirect(url_for('submissions'))
+
+    return render_template('edit.html', entry=entry)
+    
+if __name__ == '__main__':
+    init_excel()
+    app.run(debug=True)
