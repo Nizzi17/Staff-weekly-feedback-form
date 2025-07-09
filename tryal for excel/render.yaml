@@ -1,6 +1,7 @@
 services:
   - type: web
-    name: flask-app
+    name: excel-receipt-app
     env: python
-    buildCommand: ""
-    startCommand: "gunicorn ss:app"
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python h.py
